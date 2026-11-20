@@ -35,6 +35,8 @@ func (state *State) shortcutActionLabel(action shortcutAction) string {
 		return messages.PanePrevious
 	case shortcutPaneNext:
 		return messages.PaneNext
+	case shortcutNextTerm:
+		return messages.NextTerm
 	case shortcutPaneSplitHorizontal:
 		return messages.PaneSplitHorizontal
 	case shortcutPaneSplitVertical:

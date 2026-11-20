@@ -670,6 +670,7 @@ var EnglishMessages = Messages{
 	LabelTerminalFmt:               "Terminal %s",
 	PanePrevious:                   "Previous pane",
 	PaneNext:                       "Next pane",
+	NextTerm:                       "Next terminal",
 	PaneSplitHorizontal:            "Split Right",
 	PaneSplitVertical:              "Split Down",
 	PaneClose:                      "Close pane",

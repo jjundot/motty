@@ -470,6 +470,72 @@ func hoverWorld(t *testing.T) (*State, []layoutcore.WorkspaceID, *time.Duration)
 	return state, ids, now
 }
 
+// tabDragWorld opens three plain tabs of one pane each under a clock the
+// test moves by hand; the last opened is on show.
+func tabDragWorld(t *testing.T) (*State, []layoutcore.WorkspaceID, *time.Duration) {
+	t.Helper()
+	_, options := newWorld(t)
+	options.Invalidate = func() {}
+	now := new(time.Duration)
+	options.Now = func() time.Duration { return *now }
+	state := newTestState(t, options)
+	for index := 0; index < 3; index++ {
+		state.activeSection = sectionHosts
+		state.selectedHostID = state.hosts[index].ID
+		openHost(state)
+	}
+	var ids []layoutcore.WorkspaceID
+	for _, tab := range state.deck.Workspaces(nil) {
+		ids = append(ids, tab.ID)
+	}
+	if len(ids) != 3 {
+		t.Fatalf("%d tabs", len(ids))
+	}
+	state.Paint(&gfx.Canvas{}, gfx.Size{Width: 1400, Height: 900})
+	return state, ids, now
+}
+
+// A tab of a single pane has no pane bar to drag: the tab itself is the only
+// handle. Resting it on another tab switches to that tab mid-drag, and the
+// drop in a pane's middle then joins the two, as a pane drag's rest does.
+func TestRestingATabDragOnAnotherTabSwitchesAndJoinsIt(t *testing.T) {
+	state, ids, now := tabDragWorld(t)
+	target := hitTabList.At(int(ids[0]))
+	press(state, target, tabCenter(state, ids[0]))
+
+	// The rest begins: no switch until the delay has passed.
+	dragTo(state, target, tabCenter(state, ids[1]))
+	if !state.tabDrag.active || state.tabDrag.pane != 0 || state.tabDrag.hoverTab != ids[1] {
+		t.Fatalf("the drag is not resting on the tab: %+v", state.tabDrag)
+	}
+	if state.deck.ActiveWorkspace() != ids[2] {
+		t.Fatal("the switch came before the rest completed")
+	}
+	*now += tabDragHoverDelay + time.Millisecond
+	state.Paint(&gfx.Canvas{}, gfx.Size{Width: 1400, Height: 900})
+	if state.deck.ActiveWorkspace() != ids[1] || !state.tabDrag.active {
+		t.Fatalf("active %d, drag %+v", state.deck.ActiveWorkspace(), state.tabDrag)
+	}
+
+	// Dropped in the middle of the tab on show, the carried tab joins it.
+	frame := state.workspacePixelBounds(state.viewport)
+	center := gfx.Point{X: frame.X + frame.Width/2, Y: frame.Y + frame.Height/2}
+	dragTo(state, target, center)
+	if state.tabDrag.drop.kind != dropDock || state.tabDrag.drop.edge != dockCenter {
+		t.Fatalf("drop %+v, want a centre dock", state.tabDrag.drop)
+	}
+	release(state, target, center)
+	if _, ok := state.workspaceTab(ids[0]); ok {
+		t.Fatal("the carried tab is still a tab of its own")
+	}
+	if panes := state.deck.Panes(ids[1], nil); len(panes) != 2 {
+		t.Fatalf("panes %+v, want the two joined", panes)
+	}
+	if !state.workspaceTabbed(ids[1]) {
+		t.Fatal("the joined tab did not take the tabs arrangement")
+	}
+}
+
 // pressPaneBar starts a drag of the index-th pane of the tab on show by its
 // bar and returns the ground the drag's events are addressed to.
 func pressPaneBar(t *testing.T, state *State, index int) (gfx.ID, gfx.Point) {

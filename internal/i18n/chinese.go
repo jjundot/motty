@@ -670,6 +670,7 @@ var ChineseMessages = Messages{
 	LabelTerminalFmt:               "终端 %s",
 	PanePrevious:                   "上一个窗格",
 	PaneNext:                       "下一个窗格",
+	NextTerm:                       "下一个终端",
 	PaneSplitHorizontal:            "向右分屏",
 	PaneSplitVertical:              "向下分屏",
 	PaneClose:                      "关闭窗格",

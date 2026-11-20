@@ -670,6 +670,7 @@ var TraditionalMessages = Messages{
 	LabelTerminalFmt:               "終端機 %s",
 	PanePrevious:                   "上一個窗格",
 	PaneNext:                       "下一個窗格",
+	NextTerm:                       "下一個終端",
 	PaneSplitHorizontal:            "向右分割畫面",
 	PaneSplitVertical:              "向下分割畫面",
 	PaneClose:                      "關閉窗格",

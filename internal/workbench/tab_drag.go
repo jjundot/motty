@@ -23,10 +23,14 @@ import (
 // tabs: the pane leaves the split and becomes a tab of its own, its session and
 // everything on its screen carried along, the reverse of docking a tab.
 //
-// A pane drag that rests on another tab switches to it mid-drag, so the pane
-// can be carried into that tab's panes in one gesture: dropped in a pane's
-// middle it joins that tab as one of its tabs, on an edge it docks beside the
-// pane, and back among the tabs it still becomes a tab of its own.
+// A drag that rests on another tab switches to it mid-drag. A pane carried
+// that way can be dropped into that tab's panes in one gesture: dropped in a
+// pane's middle it joins that tab as one of its tabs, on an edge it docks
+// beside the pane, and back among the tabs it still becomes a tab of its own.
+// A whole tab carried that way can then be dropped on the tab on show — in a
+// pane's middle to join it, on an edge to dock beside it — which is the only
+// way to merge a tab into one that is not on show, and the only drag a tab
+// of a single pane has, its bar being the tab itself.
 
 const (
 	tabDragThreshold = float32(6)
@@ -112,10 +116,10 @@ type tabDrag struct {
 	hasHost   bool
 	start, at gfx.Point
 	drop      tabDrop
-	// hoverTab is the tab a pane drag is resting on and hoverSince when the
-	// rest began; resting there for tabDragHoverDelay switches to that tab
-	// mid-drag (see tabDragHoverSwitch). Both are zero unless a pane drag
-	// rests on a tab other than the one on show.
+	// hoverTab is the tab a drag is resting on and hoverSince when the rest
+	// began; resting there for tabDragHoverDelay switches to that tab
+	// mid-drag (see tabDragHoverSwitch). Both are zero unless a drag rests
+	// on a tab other than the one on show.
 	hoverTab   layoutcore.WorkspaceID
 	hoverSince time.Duration
 	// panes is how many panes the dragged tab brings.
@@ -218,7 +222,7 @@ func (state *State) trackTabDrag(drag *tabDrag, event gfx.PointerEvent) {
 		// A pane only ever lands among this window's tabs.
 		drag.outside, drag.peer = false, nil
 		state.closeTabPreview()
-		state.trackPaneDragHover(drag)
+		state.trackDragHover(drag)
 		drag.drop = state.paneDropAt(drag.workspace, drag.pane, drag.at)
 		return
 	}
@@ -235,6 +239,12 @@ func (state *State) trackTabDrag(drag *tabDrag, event gfx.PointerEvent) {
 		drag.peer = peer
 	}
 	state.followTabPreview(drag, gfx.Point{X: event.ScreenX, Y: event.ScreenY})
+	if len(drag.group) == 0 {
+		// A group only ever reorders; a single tab, like a pane, earns the
+		// switch to a tab it rests on, so it can be dropped on that tab's
+		// panes once they are on show.
+		state.trackDragHover(drag)
+	}
 	switch {
 	case peer != nil:
 		drag.drop = tabDrop{}
@@ -279,10 +289,10 @@ func (state *State) workspaceTabAt(at gfx.Point) (layoutcore.WorkspaceID, bool) 
 	return state.workspaceTabs[index].ID, true
 }
 
-// trackPaneDragHover follows the tab a pane drag is resting on. Resting on
-// the tab on show — the dragged pane's own, at the start — starts nothing,
-// and moving on to another tab or off the tabs starts the rest over.
-func (state *State) trackPaneDragHover(drag *tabDrag) {
+// trackDragHover follows the tab a drag is resting on. Resting on the tab
+// on show — the drag's own, at the start — starts nothing, and moving on
+// to another tab or off the tabs starts the rest over.
+func (state *State) trackDragHover(drag *tabDrag) {
 	target, ok := state.workspaceTabAt(drag.at)
 	if !ok || target == state.deck.ActiveWorkspace() {
 		drag.hoverTab, drag.hoverSince = 0, 0
@@ -293,16 +303,16 @@ func (state *State) trackPaneDragHover(drag *tabDrag) {
 	}
 }
 
-// tabDragHoverSwitch carries out the switch a resting pane drag has earned:
-// the tab it rested on comes on show, and the drag rides along — its pane
-// still belongs to the tab it was lifted from, and drops from here are
-// settled against the one on show (see paneDropAt and movePaneAcross). It
-// runs in the paint, the workbench's frame, and asks for the frame the rest
-// completes in while it is still short of it, so a pointer that has stopped
-// moving still switches.
+// tabDragHoverSwitch carries out the switch a resting drag has earned:
+// the tab it rested on comes on show, and the drag rides along — a pane
+// still belongs to the tab it was lifted from, and a tab is still the tab
+// being carried; drops from here are settled against the one on show (see
+// paneDropAt, tabDropAt and movePaneAcross). It runs in the paint, the
+// workbench's frame, and asks for the frame the rest completes in while it
+// is still short of it, so a pointer that has stopped moving still switches.
 func (state *State) tabDragHoverSwitch(canvas *gfx.Canvas) {
 	drag := &state.tabDrag
-	if !drag.active || drag.pane == 0 || drag.hoverTab == 0 {
+	if !drag.active || drag.hoverTab == 0 {
 		return
 	}
 	if drag.hoverTab == state.deck.ActiveWorkspace() {
@@ -316,7 +326,11 @@ func (state *State) tabDragHoverSwitch(canvas *gfx.Canvas) {
 	target := drag.hoverTab
 	drag.hoverTab, drag.hoverSince = 0, 0
 	if state.activateWorkspace(target) {
-		drag.drop = state.paneDropAt(drag.workspace, drag.pane, drag.at)
+		if drag.pane != 0 {
+			drag.drop = state.paneDropAt(drag.workspace, drag.pane, drag.at)
+		} else {
+			drag.drop = state.tabDropAt(drag.at, drag.workspace, drag.panes, drag.group)
+		}
 	}
 }
 

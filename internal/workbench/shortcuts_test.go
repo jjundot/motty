@@ -500,6 +500,27 @@ func TestClipboardInsertChordsAliasPasteAndCopy(t *testing.T) {
 	}
 }
 
+// Shift+Tab is the Next terminal action's own chord: it walks the terminals
+// of the tab on show, and a table saved before the action existed takes the
+// default on the next start.
+func TestNextTermDefaultsToShiftTab(t *testing.T) {
+	shiftTab := keymap.Chord{Modifiers: gfx.ModifierShift, Key: gfx.KeyTab}
+	shortcuts := defaultShortcuts()
+	if got := shortcuts.actionFor(shiftTab); got != shortcutNextTerm {
+		t.Fatalf("Shift+Tab = %v, want next_term", got)
+	}
+	if got := shortcuts.chords.Chord(shortcutNextTerm); got != shiftTab {
+		t.Fatalf("next_term chord = %v, want Shift+Tab", got)
+	}
+	if name := shortcutNextTerm.String(); name != "next_term" || shortcutActionFromString(name) != shortcutNextTerm {
+		t.Fatalf("next_term name round trip = %q", name)
+	}
+	restored := restoreShortcuts(nil)
+	if got := restored.actionFor(shiftTab); got != shortcutNextTerm {
+		t.Fatalf("restored Shift+Tab = %v, want next_term", got)
+	}
+}
+
 // The split defaults must be chords no other action holds, or one of the two
 // would be shadowed by whichever the table happens to reach first. They must
 // also have left the macOS menu bar's chord: Command+Alt+H is Hide Others, which

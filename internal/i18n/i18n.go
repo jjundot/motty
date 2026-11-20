@@ -711,6 +711,7 @@ type Messages struct {
 	LabelWindowClose    string
 	PanePrevious        string
 	PaneNext            string
+	NextTerm            string
 	PaneSplitHorizontal string
 	PaneSplitVertical   string
 	PaneClose           string

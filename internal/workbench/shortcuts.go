@@ -28,6 +28,7 @@ const (
 	shortcutTabNumber
 	shortcutPanePrevious
 	shortcutPaneNext
+	shortcutNextTerm
 	shortcutPaneSplitHorizontal
 	shortcutPaneSplitVertical
 	shortcutPaneClose
@@ -96,6 +97,12 @@ func defaultShortcuts() shortcutMap {
 	shortcuts.chords.Set(shortcutTabNumber, keymap.Chord{Modifiers: primary, Char: '1'})
 	shortcuts.chords.Set(shortcutPanePrevious, keymap.Chord{Modifiers: primary | gfx.ModifierAlt, Char: 'j'})
 	shortcuts.chords.Set(shortcutPaneNext, keymap.Chord{Modifiers: primary | gfx.ModifierAlt, Char: 'k'})
+	// Shift+Tab walks the terminals of the tab on show, the Xshell gesture:
+	// one chord, pressed again and again, visits each in turn and wraps. It
+	// costs the terminal its reverse tab (CSI Z) while a terminal holds the
+	// keyboard, the same trade Control+Tab makes for tab switching; the row
+	// in Settings can be rebound or cleared like any other.
+	shortcuts.chords.Set(shortcutNextTerm, keymap.Chord{Modifiers: gfx.ModifierShift, Key: gfx.KeyTab})
 	splitHorizontal, splitVertical := paneSplitChords()
 	shortcuts.chords.Set(shortcutPaneSplitHorizontal, splitHorizontal)
 	shortcuts.chords.Set(shortcutPaneSplitVertical, splitVertical)
@@ -337,6 +344,8 @@ func (action shortcutAction) String() string {
 		return "pane_previous"
 	case shortcutPaneNext:
 		return "pane_next"
+	case shortcutNextTerm:
+		return "next_term"
 	case shortcutPaneSplitHorizontal:
 		return "pane_split_horizontal"
 	case shortcutPaneSplitVertical:
@@ -694,9 +703,10 @@ func (state *State) terminalHasMetaChords(target gfx.ID) bool {
 }
 
 // repeats reports whether holding the chord runs the action again and again:
-// holding Control+Tab walks through the tabs.
+// holding Control+Tab walks through the tabs, and holding Shift+Tab walks
+// through the terminals of the tab on show.
 func (action shortcutAction) repeats() bool {
-	return action == shortcutNextTab || action == shortcutPreviousTab
+	return action == shortcutNextTab || action == shortcutPreviousTab || action == shortcutNextTerm
 }
 
 func (state *State) executeShortcut(action shortcutAction) gfx.EventResult {
@@ -741,6 +751,8 @@ func (state *State) executeShortcut(action shortcutAction) gfx.EventResult {
 	case shortcutPanePrevious:
 		state.Click(hitPanePrevious)
 	case shortcutPaneNext:
+		state.Click(hitPaneNext)
+	case shortcutNextTerm:
 		state.Click(hitPaneNext)
 	case shortcutPaneSplitHorizontal:
 		state.Click(hitPaneSplitHorizontal)
