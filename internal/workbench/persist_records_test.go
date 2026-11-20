@@ -73,6 +73,14 @@ func TestEverySavedStateFieldIsSharedOrKeptOnThisDevice(t *testing.T) {
 		// absence in a saved state means on, which a shared setting could not
 		// express when another device turns it back on.
 		"terminal_paste_confirm_off": true,
+		// Copy on select and right-click paste are the same kind of switch,
+		// stored negated for the same reason: absence in a saved state means
+		// on, which a shared setting could not express when another device
+		// turns one of them back on.
+		"terminal_copy_on_select_off": true, "terminal_right_click_paste_off": true,
+		// The window transparency level dresses this device's own window,
+		// like the background above; another device keeps its own level.
+		"window_opacity": true,
 	}
 	entity := map[string]bool{}
 	for _, field := range entityFields {
