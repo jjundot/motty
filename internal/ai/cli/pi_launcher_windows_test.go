@@ -150,8 +150,14 @@ $standaloneNode=Join-Path $env:LOCALAPPDATA "pi-node/current/node.exe"
 			root := t.TempDir()
 			bin := filepath.Join(root, "official Pi with spaces", "bin")
 			piNodeFixture(t, bin)
-			t.Setenv("LOCALAPPDATA", filepath.Join(root, "local app data"))
-			node := piNodeFixture(t, filepath.Join(os.Getenv("LOCALAPPDATA"), "pi-node", "current"))
+			localAppData := filepath.Join(root, "local app data")
+			node := piNodeFixture(t, filepath.Join(localAppData, "pi-node", "current"))
+			// The resolver expands %LOCALAPPDATA% verbatim, so the value
+			// itself must be canonical to match the canonical fixture path.
+			if resolved, err := piLauncherPath(localAppData); err == nil {
+				localAppData = resolved
+			}
+			t.Setenv("LOCALAPPDATA", localAppData)
 			entry := filepath.Join(bin, "pi-launcher.js")
 			writePiLauncherFixture(t, entry, "// managed launcher")
 			if resolved, err := piLauncherPath(entry); err == nil {
@@ -169,6 +175,9 @@ $standaloneNode=Join-Path $env:LOCALAPPDATA "pi-node/current/node.exe"
 			}
 			fallbackDir := filepath.Join(root, "path node")
 			fallback := piNodeFixture(t, fallbackDir)
+			if resolved, err := piLauncherPath(fallbackDir); err == nil {
+				fallbackDir = resolved
+			}
 			t.Setenv("PATH", fallbackDir)
 			if err := os.Remove(node); err != nil {
 				t.Fatal(err)
@@ -222,6 +231,11 @@ func TestPiLocalNPMShimAndDirectEntry(t *testing.T) {
 	root := t.TempDir()
 	bin := filepath.Join(root, "node_modules", ".bin")
 	node := piNodeFixture(t, bin)
+	// A Node found through PATH is reported with the PATH entry's own
+	// spelling, so PATH must carry the canonical directory.
+	if resolved, err := piLauncherPath(bin); err == nil {
+		bin = resolved
+	}
 	t.Setenv("PATH", bin)
 	entry := piPackageFixture(t, root, "@earendil-works/pi-coding-agent", "dist/bundle/cli.js")
 	launcher := filepath.Join(bin, "pi.cmd")
