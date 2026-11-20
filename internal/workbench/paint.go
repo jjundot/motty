@@ -277,6 +277,12 @@ func (state *State) Paint(canvas *gfx.Canvas, size gfx.Size) {
 	cardRight += state.toolbarDockSideReserveFor(false, false)
 	chrome.workspaceSlot = ui.Box{}
 	chrome.shellPicture = picture
+	// The backdrop is the picture's cousin: while the system composites a
+	// material behind the window and the setting is on, the terminal page
+	// stands on it, so the shell must not lay its opaque frame colour under
+	// the panes either — the grounds' own translucency would only blend
+	// with that colour, and the desktop would never show.
+	chrome.shellBackdrop = state.winBackdropActive && state.winOpacity != winOpaque && terminal
 	chrome.shellHeight = size.Height
 	chrome.shellGeometry = geometry
 	chrome.shellScroll = scroll
@@ -608,11 +614,12 @@ func (state *State) declareShell(c ui.C) {
 	}
 	chrome, pal := &state.chrome, state.pal
 	root := ui.Column(c).Fill()
-	if !chrome.shellPicture {
+	shellClear := chrome.shellPicture || chrome.shellBackdrop
+	if !shellClear {
 		root.Background(state.windowFrameColor())
 	}
 	root.Children(func() {
-		state.declareWindowBar(c, &chrome.bar, false, chrome.shellPicture, chrome.shellGeometry, chrome.shellScroll)
+		state.declareWindowBar(c, &chrome.bar, false, shellClear, chrome.shellGeometry, chrome.shellScroll)
 		if chrome.shellFullPage {
 			return
 		}
@@ -1207,6 +1214,7 @@ type chromeLayout struct {
 	windowPage     *ui.Page
 	workspaceSlot  ui.Box
 	shellPicture   bool
+	shellBackdrop  bool
 	shellHeight    float32
 	shellGeometry  barGeometry
 	shellScroll    float32
