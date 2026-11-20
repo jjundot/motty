@@ -596,9 +596,14 @@ type State struct {
 	hostOrderButton gfx.Rect
 	hostSort        hostSortState
 	bg              backgroundState
-	hostsContent    float32
-	hostGroupMenu   bool
-	importMenu      bool
+	// winOpacity is the window transparency the user chose, and
+	// winBackdropActive whether the system is compositing a backdrop material
+	// behind this window for it; see window_opacity.go.
+	winOpacity        windowOpacity
+	winBackdropActive bool
+	hostsContent      float32
+	hostGroupMenu     bool
+	importMenu        bool
 	// keysMenu is the open menu under the Keychain page's Add Key button.
 	keysMenu          bool
 	hostsBounds       gfx.Rect // the hosts page as last painted; the menus anchor to it
@@ -833,7 +838,8 @@ type State struct {
 	terminalCursorThickness cursorThickness
 	// terminalCopyOnSelect copies a selection the moment the mouse finishes it,
 	// and terminalRightClickPaste makes a right click paste instead of opening
-	// the terminal menu.
+	// the terminal menu. Both default to on (see the negated keys in persist.go);
+	// restore turns them off only when the user did so in Settings.
 	terminalCopyOnSelect, terminalRightClickPaste bool
 	terminalWordSeparators                        string
 	terminalWordEditor                            text.Editor

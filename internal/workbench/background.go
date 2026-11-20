@@ -314,10 +314,15 @@ func (state *State) clickBackground(id gfx.ID) bool {
 func (state *State) backgroundOn() bool { return state.bg.set && state.bg.pix != nil }
 
 // ground is the color of a terminal's ground: the color itself, or, while the
-// picture is showing, the color at the picture's visibility.
+// picture is showing, the color at the picture's visibility — and, while the
+// window transparency is really being composited behind the window, the
+// color at that strength too, so the desktop shows through the terminals.
 func (state *State) ground(color gfx.Color) gfx.Color {
 	if state.showsBackground() {
 		color.Alpha *= state.bg.strength.opacity()
+	}
+	if state.winBackdropActive && state.winOpacity != winOpaque {
+		color.Alpha *= state.winOpacity.factor()
 	}
 	return color
 }

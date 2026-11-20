@@ -14,6 +14,10 @@ import (
 )
 
 func rightClick(state *State, session *Session, x, y float32) gfx.EventResult {
+	// The shipped default makes a right click paste; the menu these tests are
+	// about is the same one a user gets with that setting off, or with Shift
+	// held. Turn the paste off so the click opens it.
+	state.terminalRightClickPaste = false
 	return state.Pointer(gfx.PointerEvent{
 		Kind: gfx.PointerDown, Button: gfx.PointerButtonSecondary, Target: terminalTestHit(state, session),
 		X: x, Y: y, Viewport: state.viewport,

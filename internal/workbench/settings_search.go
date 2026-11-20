@@ -220,6 +220,7 @@ func (state *State) eachSettingsEntry(add func(settingsEntry)) {
 	row(settingsTerminal, m2.Row, m2.RowDescription)
 	row(settingsTerminal, tools.BgRow, tools.BgRowNone)
 	row(settingsTerminal, tools.BgVisibility, "")
+	row(settingsTerminal, tools.WindowOpacityRow, tools.WindowOpacityDescription)
 
 	row(settingsConnection, m.SettingsConnectionTimeout, m.SettingsConnectionTimeoutDescription)
 	// The setting is called "SSH liveness probe" now, but the wording users know

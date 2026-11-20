@@ -177,6 +177,7 @@ func (state *State) Paint(canvas *gfx.Canvas, size gfx.Size) {
 	// grid's page drag and the drag overlays below menus are cancelled the same
 	// way.
 	state.reconcileDragHosts()
+	state.tabDragHoverSwitch(canvas)
 	state.devBeginPaint()
 	state.fileManagerRect = gfx.Rect{}
 	if state.activeSection != sectionSettings || state.settingsCategory != settingsTerminal || state.settingsSearching() {
@@ -482,6 +483,19 @@ func (state *State) windowPage() *ui.Page {
 func (state *State) WindowConfig(base app.Config) app.Config {
 	config := ui.Configure(state.windowPage(), base)
 	config.Paint = base.Paint
+	// The window transparency (window_opacity.go) rides on the backdrop
+	// material: the callback is installed whatever the setting, because a
+	// non-nil callback is what opts the window into composition at creation,
+	// and it answers none while the setting is opaque. The clear colour takes
+	// the setting's strength too, so a pixel nothing paints — a gap between
+	// surfaces — blends like the terminal grounds do; a window opened before
+	// the setting changed keeps its first clear colour, which only those gaps
+	// ever show.
+	config.WindowBackdrop = state.windowBackdropStyle
+	config.OnBackdropChange = state.setWindowBackdropActive
+	if state.winOpacity != winOpaque {
+		config.ClearColor.Alpha *= float64(state.winOpacity.factor())
+	}
 	// The assistant owns the wheel over its own panel: its lists keep their
 	// offsets in the page, but a modal dialog must still keep them still, which
 	// the page's generic scroll-area routing does not know. Everything else the

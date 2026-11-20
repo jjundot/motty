@@ -91,13 +91,17 @@ type savedState struct {
 	StartupDisabled bool `json:"startup_disabled,omitempty"`
 	// StartupNoReuse is the launch's reuse switch, stored negated so that a
 	// fresh install without this key reuses what is already open.
-	StartupNoReuse          bool                `json:"startup_no_reuse,omitempty"`
-	TerminalClipboard       string              `json:"terminal_clipboard,omitempty"`
-	TerminalCursorSteady    bool                `json:"terminal_cursor_steady,omitempty"`
-	TerminalCursorThickness string              `json:"terminal_cursor_thickness,omitempty"`
-	TerminalCopyOnSelect    bool                `json:"terminal_copy_on_select,omitempty"`
+	StartupNoReuse          bool   `json:"startup_no_reuse,omitempty"`
+	TerminalClipboard       string `json:"terminal_clipboard,omitempty"`
+	TerminalCursorSteady    bool   `json:"terminal_cursor_steady,omitempty"`
+	TerminalCursorThickness string `json:"terminal_cursor_thickness,omitempty"`
+	// CopyOnSelectOff and RightClickPasteOff are stored negated so that a
+	// fresh install without these keys has both behaviours on, the Xshell-style
+	// defaults: a selection is copied as it is made and a right click pastes.
+	// Turning either off in Settings writes the key.
+	CopyOnSelectOff         bool                `json:"terminal_copy_on_select_off,omitempty"`
 	TerminalWordSeparators  string              `json:"terminal_word_separators,omitempty"`
-	TerminalRightClickPaste bool                `json:"terminal_right_click_paste,omitempty"`
+	RightClickPasteOff      bool                `json:"terminal_right_click_paste_off,omitempty"`
 	TabTitleMode            tabTitleMode        `json:"tab_title_mode,omitempty"`
 	TerminalTabTitle        bool                `json:"terminal_tab_title,omitempty"`
 	TerminalShowLatency     bool                `json:"terminal_show_latency,omitempty"`
@@ -216,6 +220,7 @@ type savedState struct {
 	HostPrivacyShowAddress bool             `json:"host_privacy_show_address,omitempty"`
 	HostPrivacyShowUser    bool             `json:"host_privacy_show_user,omitempty"`
 	Background             *savedBackground `json:"background,omitempty"`
+	WindowOpacity          string           `json:"window_opacity,omitempty"`
 	// Provider collections are nil while the assistant's database is unread.
 	AIProviders    *[]savedAIProvider `json:"ai_providers,omitempty"`
 	AICLIProviders *[]savedAIProvider `json:"ai_cli_providers,omitempty"`
@@ -563,9 +568,9 @@ func (state *State) snapshot() savedState {
 		TerminalClipboard:          state.terminalClipboard.String(),
 		TerminalCursorSteady:       state.terminalCursorSteady,
 		TerminalCursorThickness:    state.terminalCursorThickness.String(),
-		TerminalCopyOnSelect:       state.terminalCopyOnSelect,
+		CopyOnSelectOff:            !state.terminalCopyOnSelect,
 		TerminalWordSeparators:     state.terminalWordSeparators,
-		TerminalRightClickPaste:    state.terminalRightClickPaste,
+		RightClickPasteOff:         !state.terminalRightClickPaste,
 		TabTitleMode:               state.tabTitleMode,
 		TerminalShowLatency:        state.terminalShowLatency,
 		TerminalToolbarPosition:    state.terminalToolbarPosition.String(),
@@ -767,6 +772,7 @@ func (state *State) snapshot() savedState {
 	saved.HostPrivacyShowAddress = !state.hostPrivacy.maskAddress
 	saved.HostPrivacyShowUser = !state.hostPrivacy.maskUser
 	saved.Background = state.savedBackgroundValue()
+	saved.WindowOpacity = state.winOpacity.saved()
 	if len(state.workspaceTabs) > 0 {
 		deck := state.savedWorkspaceDeck()
 		saved.Deck = &deck
@@ -990,6 +996,7 @@ func (state *State) restoreSettings(saved savedState) {
 	state.restoreLocal(saved)
 	state.restoreShared(saved)
 	state.restoreBackground(saved.Background)
+	state.winOpacity = windowOpacityFromString(saved.WindowOpacity)
 }
 
 // reloadSettings makes this window show the configuration the store now holds,
@@ -1182,10 +1189,10 @@ func (state *State) restoreShared(saved savedState) {
 	state.terminalIntense = terminalIntenseFromString(saved.TerminalIntense)
 	state.terminalCursorSteady = saved.TerminalCursorSteady
 	state.terminalCursorThickness = cursorThicknessFromString(saved.TerminalCursorThickness)
-	state.terminalCopyOnSelect = saved.TerminalCopyOnSelect
+	state.terminalCopyOnSelect = !saved.CopyOnSelectOff
 	state.terminalWordSeparators = saved.TerminalWordSeparators
 	state.terminalWordEditor = *text.NewEditor(saved.TerminalWordSeparators)
-	state.terminalRightClickPaste = saved.TerminalRightClickPaste
+	state.terminalRightClickPaste = !saved.RightClickPasteOff
 	state.tabTitleMode = saved.TabTitleMode
 	if state.tabTitleMode == "" && saved.TerminalTabTitle {
 		state.tabTitleMode = tabTitleTerminal

@@ -2,6 +2,7 @@ package workbench
 
 import (
 	"testing"
+	"time"
 
 	"github.com/vivaui/viva/gfx"
 	"github.com/vivaui/viva/ui"
@@ -161,10 +162,11 @@ func TestDraggingATabOntoAPaneEdgeDocksItThere(t *testing.T) {
 	press(state, target, tabCenter(state, dragged))
 	frame := state.workspacePixelBounds(state.viewport)
 
-	// The middle of the pane is not an edge.
+	// The middle of the pane is the join-as-tabs drop, over the whole pane.
 	dragTo(state, target, gfx.Point{X: frame.X + frame.Width/2, Y: frame.Y + frame.Height/2})
-	if state.tabDrag.drop.kind != dropNone {
-		t.Fatalf("the middle is a drop: %+v", state.tabDrag.drop)
+	if drop := state.tabDrag.drop; drop.kind != dropDock || drop.edge != dockCenter ||
+		!pointInRect(frame.X+frame.Width/2, frame.Y+frame.Height/2, drop.zone) || drop.zone.Width < frame.Width*0.9 {
+		t.Fatalf("the middle is not the centre drop: %+v", drop)
 	}
 	// The left edge docks to the left: the dragged tab's pane comes first.
 	at := gfx.Point{X: frame.X + frame.Width*0.1, Y: frame.Y + frame.Height/2}
@@ -204,6 +206,50 @@ func TestDraggingATabOntoAPaneEdgeDocksItThere(t *testing.T) {
 	saved, _, _ := loadState(state.options.StatePath)
 	if saved.Deck == nil || len(saved.Deck.Workspaces) != 2 {
 		t.Fatal("the dock was not saved")
+	}
+}
+
+func TestDroppingATabOnAPaneMiddleJoinsItAsTabs(t *testing.T) {
+	state, ids := threeTabs(t) // ids[2] is on show
+	dragged := ids[0]
+	sessionOf := func(id layoutcore.WorkspaceID) layoutcore.SessionID {
+		return state.deck.Panes(id, nil)[0].SessionID
+	}
+	moved, shown := sessionOf(dragged), sessionOf(ids[2])
+	target := hitTabList.At(int(dragged))
+	press(state, target, tabCenter(state, dragged))
+	frame := state.workspacePixelBounds(state.viewport)
+	at := gfx.Point{X: frame.X + frame.Width/2, Y: frame.Y + frame.Height/2}
+	dragTo(state, target, at)
+	release(state, target, at)
+
+	if got := tabOrder(state); len(got) != 2 || got[0] != ids[1] || got[1] != ids[2] {
+		t.Fatalf("tabs after the join: %v", got)
+	}
+	panes := state.deck.Panes(ids[2], nil)
+	if len(panes) != 2 {
+		t.Fatalf("panes %+v, want the shown and the joined session", panes)
+	}
+	joined := map[layoutcore.SessionID]bool{}
+	for _, pane := range panes {
+		joined[pane.SessionID] = true
+	}
+	if !joined[moved] || !joined[shown] {
+		t.Fatalf("panes %+v, want %d and %d", panes, moved, shown)
+	}
+	// The tab on show took the tabs arrangement: one pane at a time, picked
+	// from the pane tab strip.
+	if !state.workspaceTabbed(ids[2]) {
+		t.Fatal("the joined tab is not arranged as tabs")
+	}
+	if state.deck.ActiveWorkspace() != ids[2] || state.activeSessionID != uint32(moved) {
+		t.Fatalf("active workspace %d session %d", state.deck.ActiveWorkspace(), state.activeSessionID)
+	}
+	var canvasAfter gfx.Canvas
+	state.Paint(&canvasAfter, gfx.Size{Width: 1400, Height: 900})
+	saved, _, _ := loadState(state.options.StatePath)
+	if saved.Deck == nil || len(saved.Deck.Workspaces) != 2 {
+		t.Fatal("the join was not saved")
 	}
 }
 
@@ -385,5 +431,240 @@ func TestTabDragOverlaysAreHitlessPageElementsOnTheDragLayer(t *testing.T) {
 		if hit.Bounds.X == hint.Bounds.X && hit.Bounds.Width == hint.Bounds.Width && hit.Bounds.Y == hint.Bounds.Y {
 			t.Errorf("the hint registered the hit %v", hit.ID)
 		}
+	}
+}
+
+// hoverWorld opens three tabs under a clock the test moves by hand and docks
+// the first tab beside the one on show, so the tab on show (ids[2]) is a
+// split of two panes and ids[1] is a plain tab of one pane.
+func hoverWorld(t *testing.T) (*State, []layoutcore.WorkspaceID, *time.Duration) {
+	t.Helper()
+	_, options := newWorld(t)
+	options.Invalidate = func() {}
+	now := new(time.Duration)
+	options.Now = func() time.Duration { return *now }
+	state := newTestState(t, options)
+	for index := 0; index < 3; index++ {
+		state.activeSection = sectionHosts
+		state.selectedHostID = state.hosts[index].ID
+		openHost(state)
+	}
+	var ids []layoutcore.WorkspaceID
+	for _, tab := range state.deck.Workspaces(nil) {
+		ids = append(ids, tab.ID)
+	}
+	if len(ids) != 3 {
+		t.Fatalf("%d tabs", len(ids))
+	}
+	state.Paint(&gfx.Canvas{}, gfx.Size{Width: 1400, Height: 900})
+	target := hitTabList.At(int(ids[0]))
+	press(state, target, tabCenter(state, ids[0]))
+	frame := state.workspacePixelBounds(state.viewport)
+	at := gfx.Point{X: frame.X + frame.Width*0.1, Y: frame.Y + frame.Height/2}
+	dragTo(state, target, at)
+	release(state, target, at)
+	state.Paint(&gfx.Canvas{}, gfx.Size{Width: 1400, Height: 900})
+	if panes := state.deck.Panes(ids[2], nil); len(panes) != 2 {
+		t.Fatalf("panes %+v", panes)
+	}
+	return state, ids, now
+}
+
+// pressPaneBar starts a drag of the index-th pane of the tab on show by its
+// bar and returns the ground the drag's events are addressed to.
+func pressPaneBar(t *testing.T, state *State, index int) (gfx.ID, gfx.Point) {
+	t.Helper()
+	state.refreshWorkspaceViews()
+	frame := state.workspacePixelBounds(state.viewport)
+	bar := pixelBounds(frame, state.panes[index].Bounds)
+	from := gfx.Point{X: bar.X + bar.Width/2, Y: bar.Y + infoBarHeight/2}
+	ground := hitPaneActivateList.At(index)
+	press(state, ground, from)
+	return ground, from
+}
+
+// restOnTab drags the pane onto the tab and lets the rest complete: the clock
+// passes the delay and a paint runs, as the frame the drag asks for would.
+func restOnTab(t *testing.T, state *State, ground gfx.ID, tab layoutcore.WorkspaceID, now *time.Duration) {
+	t.Helper()
+	dragTo(state, ground, tabCenter(state, tab))
+	if !state.tabDrag.active || state.tabDrag.hoverTab != tab {
+		t.Fatalf("the drag is not resting on the tab: %+v", state.tabDrag)
+	}
+	*now += tabDragHoverDelay + time.Millisecond
+	state.Paint(&gfx.Canvas{}, gfx.Size{Width: 1400, Height: 900})
+	if state.deck.ActiveWorkspace() != tab {
+		t.Fatalf("active %d after the rest, want %d", state.deck.ActiveWorkspace(), tab)
+	}
+	if !state.tabDrag.active || state.tabDrag.pane == 0 {
+		t.Fatalf("the switch dropped the drag: %+v", state.tabDrag)
+	}
+}
+
+func TestRestingAPaneDragOnAnotherTabSwitchesAndJoinsIt(t *testing.T) {
+	state, ids, now := hoverWorld(t)
+	moved := state.deck.Panes(ids[2], nil)[0].SessionID
+	resting := state.deck.Panes(ids[1], nil)[0].SessionID
+	ground, _ := pressPaneBar(t, state, 0)
+
+	// The rest begins: no switch until the delay has passed.
+	dragTo(state, ground, tabCenter(state, ids[1]))
+	if state.deck.ActiveWorkspace() != ids[2] {
+		t.Fatal("the switch came before the rest completed")
+	}
+	*now += tabDragHoverDelay + time.Millisecond
+	state.Paint(&gfx.Canvas{}, gfx.Size{Width: 1400, Height: 900})
+	if state.deck.ActiveWorkspace() != ids[1] || !state.tabDrag.active || state.tabDrag.pane == 0 {
+		t.Fatalf("active %d, drag %+v", state.deck.ActiveWorkspace(), state.tabDrag)
+	}
+
+	// Dropped in the middle of the pane on show, the pane joins it as a tab.
+	frame := state.workspacePixelBounds(state.viewport)
+	at := gfx.Point{X: frame.X + frame.Width/2, Y: frame.Y + frame.Height/2}
+	dragTo(state, ground, at)
+	if drop := state.tabDrag.drop; drop.kind != dropDock || drop.edge != dockCenter {
+		t.Fatalf("drop %+v", drop)
+	}
+	release(state, ground, at)
+
+	panes := state.deck.Panes(ids[1], nil)
+	if len(panes) != 2 {
+		t.Fatalf("panes %+v, want the resting and the carried session", panes)
+	}
+	joined := map[layoutcore.SessionID]bool{}
+	for _, pane := range panes {
+		joined[pane.SessionID] = true
+	}
+	if !joined[moved] || !joined[resting] {
+		t.Fatalf("panes %+v, want %d and %d", panes, moved, resting)
+	}
+	if !state.workspaceTabbed(ids[1]) {
+		t.Fatal("the tab the pane joined is not arranged as tabs")
+	}
+	if got := state.deck.Panes(ids[2], nil); len(got) != 1 {
+		t.Fatalf("the tab left behind keeps %+v", got)
+	}
+	if state.deck.ActiveWorkspace() != ids[1] || state.activeSessionID != uint32(moved) {
+		t.Fatalf("active workspace %d session %d", state.deck.ActiveWorkspace(), state.activeSessionID)
+	}
+	if _, ok := state.sessionByIDPointer(uint32(moved)); !ok {
+		t.Fatal("the move lost the session")
+	}
+	saved, _, _ := loadState(state.options.StatePath)
+	if saved.Deck == nil || len(saved.Deck.Workspaces) != 2 {
+		t.Fatal("the move was not saved")
+	}
+}
+
+func TestRestingAPaneDragOnAnotherTabSwitchesAndDocksBeside(t *testing.T) {
+	state, ids, now := hoverWorld(t)
+	moved := state.deck.Panes(ids[2], nil)[0].SessionID
+	resting := state.deck.Panes(ids[1], nil)[0].SessionID
+	ground, _ := pressPaneBar(t, state, 0)
+	restOnTab(t, state, ground, ids[1], now)
+
+	// Dropped on the left edge, the pane docks beside the pane on show and
+	// the tab keeps its split: no tabs arrangement is taken.
+	frame := state.workspacePixelBounds(state.viewport)
+	at := gfx.Point{X: frame.X + frame.Width*0.1, Y: frame.Y + frame.Height/2}
+	dragTo(state, ground, at)
+	if drop := state.tabDrag.drop; drop.kind != dropDock || drop.edge != dockLeft {
+		t.Fatalf("drop %+v", drop)
+	}
+	release(state, ground, at)
+
+	panes := state.deck.Panes(ids[1], nil)
+	if len(panes) != 2 || panes[0].SessionID != moved || panes[1].SessionID != resting {
+		t.Fatalf("panes %+v, want %d then %d", panes, moved, resting)
+	}
+	if state.workspaceTabbed(ids[1]) {
+		t.Fatal("an edge drop arranged the tab as tabs")
+	}
+	if got := state.deck.Panes(ids[2], nil); len(got) != 1 {
+		t.Fatalf("the tab left behind keeps %+v", got)
+	}
+	if state.deck.ActiveWorkspace() != ids[1] {
+		t.Fatalf("active %d", state.deck.ActiveWorkspace())
+	}
+}
+
+func TestCrossingTheTabsWithAPaneDragSwitchesNothing(t *testing.T) {
+	state, ids, now := hoverWorld(t)
+	ground, _ := pressPaneBar(t, state, 0)
+	dragTo(state, ground, tabCenter(state, ids[1]))
+	if state.tabDrag.hoverTab != ids[1] {
+		t.Fatalf("the crossing is not resting: %+v", state.tabDrag)
+	}
+	// On to the panes without resting: the rest is forgotten.
+	state.refreshWorkspaceViews()
+	frame := state.workspacePixelBounds(state.viewport)
+	other := pixelBounds(frame, state.panes[1].Bounds)
+	dragTo(state, ground, gfx.Point{X: other.X + other.Width/2, Y: other.Y + other.Height/2})
+	if state.tabDrag.hoverTab != 0 {
+		t.Fatalf("the rest survived leaving the tab: %+v", state.tabDrag)
+	}
+	*now += 2 * tabDragHoverDelay
+	state.Paint(&gfx.Canvas{}, gfx.Size{Width: 1400, Height: 900})
+	if state.deck.ActiveWorkspace() != ids[2] {
+		t.Fatalf("active %d after a crossing", state.deck.ActiveWorkspace())
+	}
+	if result := state.Key(gfx.KeyEvent{Key: gfx.KeyEscape}); !result.Handled || state.tabDrag.active {
+		t.Fatalf("escape: %+v, drag %+v", result, state.tabDrag)
+	}
+	if panes := state.deck.Panes(ids[2], nil); len(panes) != 2 {
+		t.Fatalf("panes %+v", panes)
+	}
+}
+
+func TestRestingAPaneDragOnItsOwnTabSwitchesNothing(t *testing.T) {
+	state, ids, now := hoverWorld(t)
+	ground, _ := pressPaneBar(t, state, 0)
+	dragTo(state, ground, tabCenter(state, ids[2]))
+	if state.tabDrag.hoverTab != 0 {
+		t.Fatalf("the pane's own tab started a rest: %+v", state.tabDrag)
+	}
+	*now += 2 * tabDragHoverDelay
+	state.Paint(&gfx.Canvas{}, gfx.Size{Width: 1400, Height: 900})
+	if state.deck.ActiveWorkspace() != ids[2] || !state.tabDrag.active {
+		t.Fatalf("active %d, drag %+v", state.deck.ActiveWorkspace(), state.tabDrag)
+	}
+	if result := state.Key(gfx.KeyEvent{Key: gfx.KeyEscape}); !result.Handled {
+		t.Fatalf("escape: %+v", result)
+	}
+}
+
+// TestWorkspaceTabAtNamesGroupedRows covers the grouped sidebar's half of
+// the resting geometry: a tab's row names its workspace, a group header —
+// which stands for several — names none.
+func TestWorkspaceTabAtNamesGroupedRows(t *testing.T) {
+	state := restoredGroupedTabs(t, groupingEntries()...)
+	state.Paint(&gfx.Canvas{}, gfx.Size{Width: 1400, Height: 900})
+	state.Paint(&gfx.Canvas{}, gfx.Size{Width: 1400, Height: 900})
+	view := &state.verticalTabs.grouped
+	if len(view.rows) == 0 {
+		t.Fatal("no grouped rows")
+	}
+	bounds := state.verticalTabs.bounds
+	named, headers := 0, 0
+	for rowIndex, row := range view.rows {
+		at := gfx.Point{
+			X: bounds.X + bounds.Width/2,
+			Y: state.tabStrip.origin - state.tabStrip.offset + float32(rowIndex)*state.tabStrip.pitch + state.tabStrip.pitch/2,
+		}
+		id, ok := state.workspaceTabAt(at)
+		if row.tab < 0 {
+			if ok {
+				t.Fatalf("header row %d named workspace %d", rowIndex, id)
+			}
+			headers++
+			continue
+		}
+		if !ok || id != state.workspaceTabs[row.tab].ID {
+			t.Fatalf("row %d named %d (ok %v), want %d", rowIndex, id, ok, state.workspaceTabs[row.tab].ID)
+		}
+		named++
+	}
+	if named == 0 || headers == 0 {
+		t.Fatalf("rows named %d, headers %d", named, headers)
 	}
 }

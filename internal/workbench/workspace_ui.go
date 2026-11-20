@@ -291,8 +291,9 @@ func (state *State) paintWorkspacePanes(canvas *gfx.Canvas, size gfx.Size) {
 }
 
 // windowCornerRadius is the radius the window's own content area is clipped to
-// at its bottom corners; a pane that touches one has to follow it.
-const windowCornerRadius = float32(10)
+// at its bottom corners; a pane that touches one has to follow it. It matches
+// the nearly square corners of workbenchMetrics: two pixels of turn, no more.
+const windowCornerRadius = float32(2)
 
 // The two arcs that carry the rim round a window corner, as one-pixel strokes
 // whose centerline runs half a pixel inside the pane's edge. Built once: the rim

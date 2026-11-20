@@ -995,6 +995,13 @@ type ToolsMessages struct {
 	BgErrTooLarge                   string
 	BgErrTooManyPixels              string
 	BgErrFormat                     string
+	WindowOpacityGroup              string
+	WindowOpacityRow                string
+	WindowOpacityDescription        string
+	WindowOpacityOff                string
+	WindowOpacityLight              string
+	WindowOpacityMedium             string
+	WindowOpacityStrong             string
 	TabMoveBusy                     string
 	OTPField                        string
 	OTPPlaceholder                  string

@@ -257,6 +257,16 @@ func workbenchMetrics(scale float32) (gfx.Metrics, radii) {
 	m.FontSizeS *= scale
 	m.FontSizeM *= scale
 	m.FontSizeL *= scale
+	// The workbench keeps its corners nearly square: the framework defaults
+	// (7.5 control, 11 surface) read as a rounded, consumer look, so both are
+	// pulled down to a token two pixels wide. Every radius the workbench draws
+	// derives from these two fields — RadiusItem and RadiusPopup follow them —
+	// so this one place squares the framework's controls and the workbench's
+	// own tabs, rows, cards and dialogs alike. Roundness that is a shape rather
+	// than a corner (a status dot, a scrollbar thumb, a capsule badge) is drawn
+	// from sizes, not from these tokens, and keeps its shape.
+	m.RadiusControl = 2
+	m.RadiusSurface = 2
 	return m, radii{item: m.RadiusItem(), control: m.RadiusControl, popup: m.RadiusPopup(), surface: m.RadiusSurface}
 }
 

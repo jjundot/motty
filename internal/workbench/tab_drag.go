@@ -1,6 +1,8 @@
 package workbench
 
 import (
+	"time"
+
 	"github.com/vivaui/viva/gfx"
 	"github.com/vivaui/viva/ui"
 	layoutcore "motty/internal/workspace"
@@ -10,17 +12,31 @@ import (
 // the pointer: over the tab strip it can be dropped between two tabs to move it;
 // over the terminals of the tab on show it can be dropped on one side of a pane,
 // which docks all of the dragged tab's panes beside that pane and removes the
-// tab. A press that does not travel is the click it always was, and Escape
-// cancels a drag. The drag changes nothing until it is dropped.
+// tab. Dropped on a pane's middle instead, the tab joins the tab on show as
+// more panes of it, shown one at a time under the pane tab strip — the Xshell
+// gesture of dropping a tab on a tab group to join it — and the tab on show
+// takes the tabs arrangement if it did not have it. A press that does not
+// travel is the click it always was, and Escape cancels a drag. The drag
+// changes nothing until it is dropped.
 //
 // The bar of a pane in a split tab can be dragged too, and dropped among the
 // tabs: the pane leaves the split and becomes a tab of its own, its session and
 // everything on its screen carried along, the reverse of docking a tab.
+//
+// A pane drag that rests on another tab switches to it mid-drag, so the pane
+// can be carried into that tab's panes in one gesture: dropped in a pane's
+// middle it joins that tab as one of its tabs, on an edge it docks beside the
+// pane, and back among the tabs it still becomes a tab of its own.
 
 const (
 	tabDragThreshold = float32(6)
 	// dockZone is how far in from a pane's edge a pointer still chooses that edge.
 	dockZone = float32(0.30)
+	// tabDragHoverDelay is how long a pane drag must rest on another tab
+	// before the window switches to it. Crossing the strip on the way
+	// somewhere else rests far less than this, so a passing drag switches
+	// nothing.
+	tabDragHoverDelay = 550 * time.Millisecond
 )
 
 type dockEdge uint8
@@ -31,8 +47,9 @@ const (
 	dockRight
 	dockTop
 	dockBottom
-	// dockCenter is the middle of a pane: a drop there swaps two panes of one
-	// workspace, and is no dock for a tab.
+	// dockCenter is the middle of a pane: a pane dropped there swaps with the
+	// pane it lands on, and a tab dropped there joins the tab on show as more
+	// of its panes, shown one at a time (see dockWorkspace).
 	dockCenter
 )
 
@@ -95,6 +112,12 @@ type tabDrag struct {
 	hasHost   bool
 	start, at gfx.Point
 	drop      tabDrop
+	// hoverTab is the tab a pane drag is resting on and hoverSince when the
+	// rest began; resting there for tabDragHoverDelay switches to that tab
+	// mid-drag (see tabDragHoverSwitch). Both are zero unless a pane drag
+	// rests on a tab other than the one on show.
+	hoverTab   layoutcore.WorkspaceID
+	hoverSince time.Duration
 	// panes is how many panes the dragged tab brings.
 	panes int
 	// peer is the other window the pointer is over, if any; elsewhere outside
@@ -195,6 +218,7 @@ func (state *State) trackTabDrag(drag *tabDrag, event gfx.PointerEvent) {
 		// A pane only ever lands among this window's tabs.
 		drag.outside, drag.peer = false, nil
 		state.closeTabPreview()
+		state.trackPaneDragHover(drag)
 		drag.drop = state.paneDropAt(drag.workspace, drag.pane, drag.at)
 		return
 	}
@@ -219,6 +243,80 @@ func (state *State) trackTabDrag(drag *tabDrag, event gfx.PointerEvent) {
 		drag.drop = tabDrop{}
 	default:
 		drag.drop = state.tabDropAt(drag.at, drag.workspace, drag.panes, drag.group)
+	}
+}
+
+// workspaceTabAt is the workspace whose tab lies under a window point in the
+// tab strip, if any: along the strip the tabs stand in deck order, each pitch
+// wide, the same geometry the drop among the tabs is counted in. In the
+// grouped sidebar only a tab's own row names a workspace; a group header
+// stands for several and names none.
+func (state *State) workspaceTabAt(at gfx.Point) (layoutcore.WorkspaceID, bool) {
+	strip := &state.tabStrip
+	if strip.pitch <= 0 || !pointInRect(at.X, at.Y, state.tabDropArea()) {
+		return 0, false
+	}
+	if state.verticalTabsGrouped() {
+		view := &state.verticalTabs.grouped
+		row := int((at.Y - strip.origin + strip.offset) / strip.pitch)
+		if row < 0 || row >= len(view.rows) {
+			return 0, false
+		}
+		tab := view.rows[row].tab
+		if tab < 0 || tab >= len(state.workspaceTabs) {
+			return 0, false
+		}
+		return state.workspaceTabs[tab].ID, true
+	}
+	position := at.X
+	if strip.vertical {
+		position = at.Y
+	}
+	index := int((position - strip.origin + strip.offset) / strip.pitch)
+	if index < 0 || index >= len(state.workspaceTabs) {
+		return 0, false
+	}
+	return state.workspaceTabs[index].ID, true
+}
+
+// trackPaneDragHover follows the tab a pane drag is resting on. Resting on
+// the tab on show — the dragged pane's own, at the start — starts nothing,
+// and moving on to another tab or off the tabs starts the rest over.
+func (state *State) trackPaneDragHover(drag *tabDrag) {
+	target, ok := state.workspaceTabAt(drag.at)
+	if !ok || target == state.deck.ActiveWorkspace() {
+		drag.hoverTab, drag.hoverSince = 0, 0
+		return
+	}
+	if drag.hoverTab != target {
+		drag.hoverTab, drag.hoverSince = target, state.now()
+	}
+}
+
+// tabDragHoverSwitch carries out the switch a resting pane drag has earned:
+// the tab it rested on comes on show, and the drag rides along — its pane
+// still belongs to the tab it was lifted from, and drops from here are
+// settled against the one on show (see paneDropAt and movePaneAcross). It
+// runs in the paint, the workbench's frame, and asks for the frame the rest
+// completes in while it is still short of it, so a pointer that has stopped
+// moving still switches.
+func (state *State) tabDragHoverSwitch(canvas *gfx.Canvas) {
+	drag := &state.tabDrag
+	if !drag.active || drag.pane == 0 || drag.hoverTab == 0 {
+		return
+	}
+	if drag.hoverTab == state.deck.ActiveWorkspace() {
+		drag.hoverTab, drag.hoverSince = 0, 0
+		return
+	}
+	if remaining := tabDragHoverDelay - (state.now() - drag.hoverSince); remaining > 0 {
+		canvas.RequestFrameIn(remaining)
+		return
+	}
+	target := drag.hoverTab
+	drag.hoverTab, drag.hoverSince = 0, 0
+	if state.activateWorkspace(target) {
+		drag.drop = state.paneDropAt(drag.workspace, drag.pane, drag.at)
 	}
 }
 
@@ -411,7 +509,15 @@ func (state *State) tabDropAt(at gfx.Point, source layoutcore.WorkspaceID, panes
 		}
 		edge, zone := dockZoneAt(at, bounds)
 		if edge == dockNone {
-			return tabDrop{}
+			// The middle of the pane is a dock of its own for a tab of this
+			// window: the tab joins the one on show as a tab of its group
+			// (see dockWorkspace). A tab carried from another window keeps
+			// the rim-only rule, since its drop is settled by attachPayload,
+			// which has no join-as-tabs path.
+			if source == 0 {
+				return tabDrop{}
+			}
+			return tabDrop{kind: dropDock, pane: state.panes[index].ID, edge: dockCenter, zone: bounds}
 		}
 		return tabDrop{kind: dropDock, pane: state.panes[index].ID, edge: edge, zone: zone}
 	}
@@ -457,7 +563,11 @@ func (state *State) dropTab(drag tabDrag) {
 		case dropReorder:
 			state.undockPane(drag.workspace, drag.pane, drag.drop.boundary)
 		case dropDock:
-			state.movePaneBeside(drag.workspace, drag.pane, drag.drop)
+			if state.deck.ActiveWorkspace() != drag.workspace {
+				state.movePaneAcross(drag.workspace, drag.pane, drag.drop)
+			} else {
+				state.movePaneBeside(drag.workspace, drag.pane, drag.drop)
+			}
 		}
 		return
 	}
@@ -588,19 +698,32 @@ func (state *State) closeIfEmptied() {
 }
 
 // dockWorkspace moves every pane of the src tab beside a pane of the tab on
-// show, on the side edge names, and removes the src tab.
+// show, on the side edge names, and removes the src tab. The centre of a pane
+// is the join-as-tabs drop: the src tab's panes become panes of the tab on
+// show under the tabs arrangement — beside the target in its hidden one-column
+// tree when the tab already shows one pane at a time, and by taking the tabs
+// arrangement (the layout editor's own operation, applied to the merged pane
+// order) when it does not.
 func (state *State) dockWorkspace(src layoutcore.WorkspaceID, target layoutcore.PaneID, edge dockEdge) bool {
 	dst := state.deck.ActiveWorkspace()
 	if dst == 0 || edge == dockNone {
 		return false
 	}
+	axis, placement := edge.axis(), edge.placement()
+	joinAsTabs := edge == dockCenter
+	if joinAsTabs && state.workspaceTabbed(dst) {
+		axis, placement = layoutcore.Vertical, layoutcore.After
+	}
 	sourceIdentity := state.workspaceIdentity(src)
-	if _, err := state.deck.Dock(dst, src, target, edge.axis(), edge.placement()); err != nil {
+	if _, err := state.deck.Dock(dst, src, target, axis, placement); err != nil {
 		state.status = err.Error()
 		return false
 	}
 	state.restoreWorkspaceIdentity(src, workspaceIdentity{})
 	state.restoreWorkspaceIdentity(dst, mergeWorkspaceIdentities(state.workspaceIdentity(dst), sourceIdentity))
+	if joinAsTabs && !state.workspaceTabbed(dst) {
+		state.arrangeWorkspaceAsTabs(dst)
+	}
 	state.syncActiveSession()
 	state.activeSection = sectionTerminal
 	state.rebuildTabOptions()
@@ -609,6 +732,27 @@ func (state *State) dockWorkspace(src layoutcore.WorkspaceID, target layoutcore.
 	state.fitSFTP(state.viewport)
 	state.save()
 	return true
+}
+
+// arrangeWorkspaceAsTabs gives a workspace the tabs arrangement over the panes
+// it has, in the order they now stand: the same SetLayout the layout editor
+// applies, with the same bookkeeping beside it. A failure leaves the split the
+// dock made, which is a working arrangement too, so it is not reported.
+func (state *State) arrangeWorkspaceAsTabs(workspaceID layoutcore.WorkspaceID) {
+	panes := state.deck.Panes(workspaceID, nil)
+	order := make([]layoutcore.PaneID, len(panes))
+	for index, pane := range panes {
+		order[index] = pane.ID
+	}
+	spec := layoutcore.LayoutSpec{Kind: layoutcore.LayoutTabs}
+	if err := state.deck.SetLayout(workspaceID, order, spec); err != nil {
+		return
+	}
+	state.managedWorkspaceLayouts[workspaceID] = spec
+	if _, temporary := state.temporaryWorkspaceLayouts[workspaceID]; temporary {
+		state.temporaryWorkspaceLayouts[workspaceID] = spec
+	}
+	state.workspaceViewCacheID = 0
 }
 
 // tabDragTearOff reports whether drag is a tab held outside every window, with
@@ -894,14 +1038,36 @@ func (state *State) paneBarAt(event gfx.PointerEvent) (layoutcore.PaneID, *Sessi
 }
 
 // paneDropAt is where a pane dragged to window point at would land: among the
-// tabs, or beside another pane of its own workspace.
+// tabs, or beside a pane of the workspace on show. The workspace on show is
+// the one the pane was lifted from — or, after the drag rested on another
+// tab and switched to it (see tabDragHoverSwitch), that tab's workspace,
+// whose drops move the pane across instead of within.
 func (state *State) paneDropAt(workspace layoutcore.WorkspaceID, source layoutcore.PaneID, at gfx.Point) tabDrop {
 	if drop := state.paneUndockDropAt(at); drop.kind != dropNone {
 		return drop
 	}
-	if state.activeSection != sectionTerminal || state.workspaceTabbed(workspace) || state.deck.ActiveWorkspace() != workspace {
+	if state.activeSection != sectionTerminal {
 		return tabDrop{}
 	}
+	active := state.deck.ActiveWorkspace()
+	if active == workspace {
+		if state.workspaceTabbed(workspace) {
+			return tabDrop{}
+		}
+		return state.paneDropOnPane(source, at)
+	}
+	// The drag was carried into a workspace the pane does not belong to: its
+	// panes take the drop, up to the pane limit.
+	if active == 0 || len(state.deck.Panes(active, nil)) >= layoutcore.MaxPanes {
+		return tabDrop{}
+	}
+	return state.paneDropOnPane(0, at)
+}
+
+// paneDropOnPane is where a pane dropped at at would land among the panes of
+// the workspace on show: on the edge of the pane under it, or in its middle.
+// The source pane, when it is one of them, is not a landing.
+func (state *State) paneDropOnPane(source layoutcore.PaneID, at gfx.Point) tabDrop {
 	state.refreshWorkspaceViews()
 	frame := state.workspacePixelBounds(state.viewport)
 	for index := range state.panes {
@@ -935,6 +1101,43 @@ func (state *State) movePaneBeside(workspace layoutcore.WorkspaceID, paneID layo
 	state.activatePane(workspace, paneID)
 	state.workspaceViewCacheID = 0
 	state.rebuildManagedWorkspace(workspace)
+}
+
+// movePaneAcross carries a pane that was dragged into another workspace
+// home: beside the pane it was dropped on, or into that workspace's tabs
+// when it was dropped in a pane's middle. The pane makes the trip as a tab
+// of its own — undocked, then docked by the path a dragged tab takes — so
+// the identity merge, the tabs arrangement and the save are the ones tab
+// drops already keep. A workspace the pane is the only pane of has nothing
+// to undock (Undock says so itself): the pane is the tab, and the tab
+// itself is docked across.
+func (state *State) movePaneAcross(workspace layoutcore.WorkspaceID, paneID layoutcore.PaneID, drop tabDrop) bool {
+	dst := state.deck.ActiveWorkspace()
+	if dst == 0 || dst == workspace {
+		return false
+	}
+	carrier := workspace
+	if len(state.deck.Panes(workspace, nil)) > 1 {
+		pane, ok := state.deck.Pane(workspace, paneID)
+		if !ok {
+			return false
+		}
+		title := ""
+		if session, ok := state.sessionByIDPointer(uint32(pane.SessionID)); ok {
+			title = session.Title
+		}
+		id, err := state.deck.Undock(workspace, paneID, title, len(state.workspaceTabs))
+		if err != nil {
+			state.status = err.Error()
+			return false
+		}
+		carrier = id
+		// Undock leaves the tab it made on show; the drop's workspace is
+		// the one the drag switched to, so put it back on show for the
+		// dock, which reads its destination from the deck.
+		state.deck.ActivateWorkspace(dst)
+	}
+	return state.dockWorkspace(carrier, drop.pane, drop.edge)
 }
 
 // paneUndockDropAt is where a pane dragged to window point at would become a

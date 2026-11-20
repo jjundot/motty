@@ -421,6 +421,7 @@ func (state *State) paintTerminalSettings(page *settingsPage) {
 		state.paintHighlightSettings(page)
 		state.paintAutofillSettings(page)
 		state.paintBackgroundSettings(page)
+		state.paintWindowOpacitySettings(page)
 		state.paintTerminalFindSettingsGroup(page)
 	})
 }
