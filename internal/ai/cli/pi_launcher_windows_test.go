@@ -32,7 +32,15 @@ func piPackageFixture(t *testing.T, prefix, name, entry string) string {
 	writePiLauncherFixture(t, filepath.Join(dir, "package.json"), string(raw))
 	path := filepath.Join(dir, filepath.FromSlash(entry))
 	writePiLauncherFixture(t, path, "// fixture")
-	return path
+	// The resolver reports canonical paths (GetFinalPathNameByHandle), so
+	// expectations must be canonical too: on runners whose TEMP directory
+	// uses an 8.3 short name (RUNNER~1), a raw t.TempDir() path never
+	// matches the resolved long form even with EqualFold.
+	resolved, err := piLauncherPath(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return resolved
 }
 
 func piNodeFixture(t *testing.T, dir string) string {
@@ -54,7 +62,11 @@ func piNodeFixture(t *testing.T, dir string) string {
 	if err := os.WriteFile(path, raw, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	return path
+	resolved, err := piLauncherPath(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return resolved
 }
 
 func TestPiLauncherNodeHelper(t *testing.T) {
@@ -90,6 +102,9 @@ func TestPiLaunchersUseSelectedInstallAndManifestEntry(t *testing.T) {
 			piPackageFixture(t, prefix, other, "dist/other.js")
 			launcher := filepath.Join(prefix, "pi"+tc.ext)
 			writePiLauncherFixture(t, launcher, tc.script)
+			if resolved, err := piLauncherPath(launcher); err == nil {
+				launcher = resolved
+			}
 			// A co-located official launcher must not override the npm shim.
 			writePiLauncherFixture(t, filepath.Join(prefix, "pi-launcher.js"), "// other install")
 			c, err := resolve(store.KindPiCLI, launcher)
@@ -139,6 +154,9 @@ $standaloneNode=Join-Path $env:LOCALAPPDATA "pi-node/current/node.exe"
 			node := piNodeFixture(t, filepath.Join(os.Getenv("LOCALAPPDATA"), "pi-node", "current"))
 			entry := filepath.Join(bin, "pi-launcher.js")
 			writePiLauncherFixture(t, entry, "// managed launcher")
+			if resolved, err := piLauncherPath(entry); err == nil {
+				entry = resolved
+			}
 			launcher := filepath.Join(bin, "pi"+tc.ext)
 			writePiLauncherFixture(t, launcher, tc.script)
 			c, err := resolve(store.KindPiCLI, launcher)
